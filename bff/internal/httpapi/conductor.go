@@ -55,6 +55,15 @@ func (s *Server) conductorTools() []conductor.Tool {
 			"intent_id": map[string]any{"type": "string"},
 			"message":   map[string]any{"type": "string"},
 		}, "task_id", "intent_id", "message"),
+		tool("artex_task_create", "提议新建并启动一个 ARTEX 渗透任务；需要用户确认后才会创建。", map[string]any{
+			"description":      map[string]any{"type": "string", "description": "任务描述：测试什么目标"},
+			"goal":             map[string]any{"type": "string", "description": "任务目标：做到什么算完成"},
+			"hard_requirement": map[string]any{"type": "string", "description": "可选，操作员硬性要求，例如禁止破坏性操作"},
+		}, "description", "goal"),
+		tool("artex_conversation_create", "提议新建一个 ARTEX 对话；需要用户确认后才会创建。", map[string]any{
+			"agent_key": map[string]any{"type": "string", "description": "对话使用的 agent，例如 auto / pentest / reporter"},
+			"title":     map[string]any{"type": "string", "description": "可选标题；留空由 ARTEX 自动命名"},
+		}, "agent_key"),
 	}
 }
 
@@ -212,6 +221,38 @@ func (s *Server) executeTool(ctx context.Context, device deviceInfo, call conduc
 		}
 		conf, err := s.createConfirmation(device, call.Function.Name, input,
 			fmt.Sprintf("向 task %v 的意图 #%v 发送纠偏：%v", input["task_id"], input["intent_id"], input["message"]))
+		if err != nil {
+			return nil, nil, err
+		}
+		return confirmationJSON(conf), &conf, nil
+	case "artex_task_create":
+		input := map[string]any{
+			"description":      argString(args, "description"),
+			"goal":             argString(args, "goal"),
+			"hard_requirement": argString(args, "hard_requirement"),
+		}
+		if input["description"] == "" || input["goal"] == "" {
+			return nil, nil, fmt.Errorf("description and goal are required")
+		}
+		conf, err := s.createConfirmation(device, call.Function.Name, input,
+			fmt.Sprintf("新建任务：%v（目标：%v）", input["description"], input["goal"]))
+		if err != nil {
+			return nil, nil, err
+		}
+		return confirmationJSON(conf), &conf, nil
+	case "artex_conversation_create":
+		input := map[string]any{
+			"agent_key": argString(args, "agent_key"),
+			"title":     argString(args, "title"),
+		}
+		if input["agent_key"] == "" {
+			return nil, nil, fmt.Errorf("agent_key is required")
+		}
+		summary := fmt.Sprintf("新建对话：agent=%v", input["agent_key"])
+		if input["title"] != "" {
+			summary += fmt.Sprintf("，标题=%v", input["title"])
+		}
+		conf, err := s.createConfirmation(device, call.Function.Name, input, summary)
 		if err != nil {
 			return nil, nil, err
 		}

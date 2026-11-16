@@ -1,15 +1,20 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/y1shiny1shin/ryagent/bff/internal/artex"
 	"github.com/y1shiny1shin/ryagent/bff/internal/conductor"
+	githubfeed "github.com/y1shiny1shin/ryagent/bff/internal/github"
 	"github.com/y1shiny1shin/ryagent/bff/internal/httpapi"
+	"github.com/y1shiny1shin/ryagent/bff/internal/intel"
+	jobfeed "github.com/y1shiny1shin/ryagent/bff/internal/jobs"
 	"github.com/y1shiny1shin/ryagent/bff/internal/store"
 )
 
@@ -43,7 +48,38 @@ func main() {
 		os.Getenv("DEEPSEEK_API_KEY"),
 		env("DEEPSEEK_MODEL", "deepseek-chat"),
 	)
-	srv := httpapi.New(st, ac, ds, ownerPassword)
+	minutes, _ := strconv.Atoi(env("GITHUB_REFRESH_MINUTES", "4320"))
+	gh := githubfeed.New(
+		st,
+		os.Getenv("GITHUB_TOKEN"),
+		os.Getenv("GITHUB_PROXY"),
+		env("GITHUB_OWNER", "y1shiny1shin"),
+		minutes,
+		os.Getenv("GITHUB_EVENT_TYPES"),
+		os.Getenv("GITHUB_IGNORE_USERS"),
+	)
+	gh.Start(context.Background())
+
+	jobHours, _ := strconv.Atoi(env("JOB_REFRESH_HOURS", "72"))
+	jobMin, _ := strconv.Atoi(env("JOB_MIN_SCORE", "45"))
+	jobAge, _ := strconv.Atoi(env("JOB_MAX_AGE_DAYS", "30"))
+	js := jobfeed.New(
+		st,
+		os.Getenv("JOB_PROXY"),
+		jobHours,
+		env("JOB_CITY", "成都"),
+		os.Getenv("JOB_KEYWORDS"),
+		jobMin,
+		jobAge,
+		os.Getenv("JOB_SOURCES"),
+	)
+	js.Start(context.Background())
+
+	intelMinutes, _ := strconv.Atoi(env("INTEL_REFRESH_MINUTES", "4320"))
+	is := intel.New(st, os.Getenv("INTEL_PROXY"), os.Getenv("GITHUB_TOKEN"), intelMinutes, os.Getenv("INTEL_SOURCES"))
+	is.Start(context.Background())
+
+	srv := httpapi.New(st, ac, gh, js, is, ds, ownerPassword)
 	httpSrv := &http.Server{
 		Addr:              addr,
 		Handler:           srv.Handler(),

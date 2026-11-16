@@ -218,3 +218,109 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+func (c *Client) Conversations(ctx context.Context) ([]map[string]any, error) {
+	var out struct {
+		Conversations []map[string]any `json:"conversations"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/conversations", nil, &out, false); err != nil {
+		return nil, err
+	}
+	if out.Conversations == nil {
+		out.Conversations = []map[string]any{}
+	}
+	return out.Conversations, nil
+}
+
+func (c *Client) ConversationMessages(ctx context.Context, id, since string) (map[string]any, error) {
+	q := url.Values{}
+	q.Set("limit", "200")
+	if since != "" {
+		q.Set("since", since)
+	}
+	var out map[string]any
+	if err := c.do(ctx, http.MethodGet, "/api/conversations/"+url.PathEscape(id)+"/messages?"+q.Encode(), nil, &out, false); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) SendConversationMessage(ctx context.Context, id, message string) error {
+	return c.do(ctx, http.MethodPost, "/api/conversations/"+url.PathEscape(id)+"/messages",
+		map[string]string{"message": message}, nil, false)
+}
+
+// ConversationMessageDetail lazily loads the full text of one conversation step.
+// ARTEX list endpoints only return a truncated summary; the phone expands a
+// bubble by asking for its detail on demand, so the initial page stays small.
+func (c *Client) ConversationMessageDetail(ctx context.Context, id, seq string) (map[string]any, error) {
+	var out map[string]any
+	path := "/api/conversations/" + url.PathEscape(id) + "/messages/" + url.PathEscape(seq)
+	if err := c.do(ctx, http.MethodGet, path, nil, &out, false); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// TaskActivityDetail lazily loads the full text of one task activity step (the
+// task's main-agent conversation). Same summary/detail split as conversations.
+func (c *Client) TaskActivityDetail(ctx context.Context, taskID, seq string) (map[string]any, error) {
+	q := url.Values{}
+	q.Set("task", taskID)
+	var out map[string]any
+	path := "/api/exploration/activity/" + url.PathEscape(seq) + "?" + q.Encode()
+	if err := c.do(ctx, http.MethodGet, path, nil, &out, false); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) TaskActivity(ctx context.Context, taskID, since string) (map[string]any, error) {
+	q := url.Values{}
+	q.Set("task", taskID)
+	q.Set("limit", "300")
+	if since != "" {
+		q.Set("since", since)
+	}
+	var out map[string]any
+	if err := c.do(ctx, http.MethodGet, "/api/exploration/activity?"+q.Encode(), nil, &out, false); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Agents lists ARTEX agents so the app can offer a picker for new conversations.
+func (c *Client) Agents(ctx context.Context) ([]map[string]any, error) {
+	var out struct {
+		Agents []map[string]any `json:"agents"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/agents", nil, &out, false); err != nil {
+		return nil, err
+	}
+	if out.Agents == nil {
+		out.Agents = []map[string]any{}
+	}
+	return out.Agents, nil
+}
+
+// CreateTask creates and starts an ARTEX task. Only operator-safe fields are
+// accepted by the BFF; the planner receives description + goal.
+func (c *Client) CreateTask(ctx context.Context, payload map[string]any) (map[string]any, error) {
+	var out map[string]any
+	if err := c.do(ctx, http.MethodPost, "/api/tasks", payload, &out, false); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreateConversation(ctx context.Context, agentKey, title string) (map[string]any, error) {
+	body := map[string]any{"agent_key": agentKey}
+	if strings.TrimSpace(title) != "" {
+		body["title"] = strings.TrimSpace(title)
+	}
+	var out map[string]any
+	if err := c.do(ctx, http.MethodPost, "/api/conversations", body, &out, false); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

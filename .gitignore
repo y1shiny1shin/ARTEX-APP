@@ -69,6 +69,7 @@
 /keys/
 /deploy/.env
 /deploy/secrets/
+/deploy/bff/ryagent-bff
 
 # ── 通用 ────────────────────────────────────────────────────────
 .env

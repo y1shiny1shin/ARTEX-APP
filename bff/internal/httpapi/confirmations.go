@@ -104,6 +104,24 @@ func (s *Server) executeConfirmed(ctx context.Context, c store.Confirmation) err
 			return fmt.Errorf("invalid steer input")
 		}
 		return s.artex.Steer(ctx, taskID, intentID, message, "bff-"+randomHex(8))
+	case "artex_task_create":
+		description, goal := argString(input, "description"), argString(input, "goal")
+		if description == "" || goal == "" {
+			return fmt.Errorf("invalid task create input")
+		}
+		payload := map[string]any{"description": description, "goal": goal}
+		if hard := argString(input, "hard_requirement"); hard != "" {
+			payload["hard_requirement"] = hard
+		}
+		_, err := s.artex.CreateTask(ctx, payload)
+		return err
+	case "artex_conversation_create":
+		agentKey := argString(input, "agent_key")
+		if agentKey == "" {
+			return fmt.Errorf("invalid conversation create input")
+		}
+		_, err := s.artex.CreateConversation(ctx, agentKey, argString(input, "title"))
+		return err
 	default:
 		return fmt.Errorf("unknown capability %q", c.Capability)
 	}

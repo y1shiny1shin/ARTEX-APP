@@ -17,18 +17,24 @@ import (
 
 	"github.com/y1shiny1shin/ryagent/bff/internal/artex"
 	"github.com/y1shiny1shin/ryagent/bff/internal/conductor"
+	githubfeed "github.com/y1shiny1shin/ryagent/bff/internal/github"
+	"github.com/y1shiny1shin/ryagent/bff/internal/intel"
+	jobfeed "github.com/y1shiny1shin/ryagent/bff/internal/jobs"
 	"github.com/y1shiny1shin/ryagent/bff/internal/store"
 )
 
 type Server struct {
 	store         *store.Store
 	artex         *artex.Client
+	github        *githubfeed.Service
+	jobs          *jobfeed.Service
+	intel         *intel.Service
 	ds            *conductor.Client
 	ownerPassword string
 }
 
-func New(st *store.Store, ac *artex.Client, ds *conductor.Client, ownerPassword string) *Server {
-	return &Server{store: st, artex: ac, ds: ds, ownerPassword: ownerPassword}
+func New(st *store.Store, ac *artex.Client, gh *githubfeed.Service, js *jobfeed.Service, is *intel.Service, ds *conductor.Client, ownerPassword string) *Server {
+	return &Server{store: st, artex: ac, github: gh, jobs: js, intel: is, ds: ds, ownerPassword: ownerPassword}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -38,8 +44,17 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("POST /v1/auth/pair", s.pair)
 	mux.HandleFunc("GET /v1/overview", s.auth(s.overview))
+	mux.HandleFunc("GET /v1/agents", s.auth(s.agents))
 	mux.HandleFunc("GET /v1/tasks", s.auth(s.tasks))
+	mux.HandleFunc("POST /v1/tasks", s.auth(s.createTask))
 	mux.HandleFunc("GET /v1/tasks/{id}/progress", s.auth(s.taskProgress))
+	mux.HandleFunc("GET /v1/tasks/{id}/conversation", s.auth(s.taskConversation))
+	mux.HandleFunc("GET /v1/tasks/{id}/conversation/{seq}", s.auth(s.taskActivityDetail))
+	mux.HandleFunc("GET /v1/conversations", s.auth(s.conversations))
+	mux.HandleFunc("POST /v1/conversations", s.auth(s.createConversation))
+	mux.HandleFunc("GET /v1/conversations/{id}/messages", s.auth(s.conversationMessages))
+	mux.HandleFunc("GET /v1/conversations/{id}/messages/{seq}", s.auth(s.conversationMessageDetail))
+	mux.HandleFunc("POST /v1/conversations/{id}/messages", s.auth(s.sendConversationMessage))
 	mux.HandleFunc("GET /v1/approvals", s.auth(s.approvals))
 	mux.HandleFunc("POST /v1/approvals/{id}/decide", s.auth(s.decideApproval))
 	mux.HandleFunc("POST /v1/tasks/{id}/directive", s.auth(s.taskDirective))
@@ -51,6 +66,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/confirmations/{id}", s.auth(s.getConfirmation))
 	mux.HandleFunc("POST /v1/confirmations/{id}", s.auth(s.resolveConfirmation))
 	mux.HandleFunc("GET /v1/audit", s.auth(s.audit))
+	mux.HandleFunc("GET /v1/github/feed", s.auth(s.githubFeed))
+	mux.HandleFunc("POST /v1/github/refresh", s.auth(s.githubRefresh))
+	mux.HandleFunc("GET /v1/jobs", s.auth(s.jobsFeed))
+	mux.HandleFunc("GET /v1/jobs/{id}", s.auth(s.jobDetail))
+	mux.HandleFunc("POST /v1/jobs/refresh", s.auth(s.jobsRefresh))
+	mux.HandleFunc("GET /v1/intel", s.auth(s.intelFeed))
+	mux.HandleFunc("POST /v1/intel/refresh", s.auth(s.intelRefresh))
 	return withCORS(mux)
 }
 
@@ -137,7 +159,6 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 502, err.Error())
 		return
 	}
-	redactTasks(tasks)
 	approvals, err := s.artex.Approvals(r.Context())
 	if err != nil {
 		writeErr(w, 502, err.Error())
@@ -161,7 +182,6 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 502, err.Error())
 		return
 	}
-	redactTasks(tasks)
 	writeJSON(w, 200, map[string]any{"tasks": tasks})
 }
 
@@ -184,7 +204,6 @@ func (s *Server) progressData(ctx context.Context, taskID string) (map[string]an
 	if err != nil {
 		return nil, err
 	}
-	redactTask(task)
 	stats, _ := s.artex.Stats(ctx, taskID)
 	// The task DTO does not always carry the live goal counters; active_task in
 	// /api/stats is the authoritative runtime view. Merge it into the task card.
@@ -200,9 +219,6 @@ func (s *Server) progressData(ctx context.Context, taskID string) (map[string]an
 	filtered := make([]map[string]any, 0)
 	for _, a := range approvals {
 		if fmt.Sprint(a["task_id"]) == taskID {
-			if v, ok := a["reason"].(string); ok {
-				a["reason"] = redactText(v)
-			}
 			filtered = append(filtered, a)
 		}
 	}
@@ -210,7 +226,7 @@ func (s *Server) progressData(ctx context.Context, taskID string) (map[string]an
 	running := 0
 	for _, in := range intents {
 		state := fmt.Sprint(in["state"])
-		summary := redactText(intentSummary(in))
+		summary := intentSummary(in)
 		writeIntents = append(writeIntents, map[string]any{
 			"id": in["id"], "state": state, "summary": summary,
 		})
@@ -357,6 +373,8 @@ func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
